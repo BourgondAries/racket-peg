@@ -1,13 +1,18 @@
-#lang racket
+;#lang racket
 
-(provide define-peg
+(define-module (guile-peg peg)
+#:export (define-peg
          define-peg/bake define-peg/drop define-peg/tag
-         peg)
+         peg))
 
-(require (for-syntax racket/syntax))
+;(require (for-syntax racket/syntax))
 
-(require peg/push-pop-boxes)
-(require peg/peg-result)
+(use-modules (srfi srfi-1))
+(use-modules (srfi srfi-9))
+
+(import (guile-peg push-pop-boxes))
+(import (guile-peg peg-result))
+
 
 ;;;;
 ;; generic utility functions
@@ -54,7 +59,7 @@
 (define pegvm-current-rule (make-parameter #f))
 (define pegvm-current-choice (make-parameter #f))
 
-(struct control-frame (position label) #:transparent)
+(define-record-type <control-frame> (control-frame position label) control-frame? (position control-frame-position) (label control-frame-label))
 
 (define (pegvm-eof?) (= (string-length (pegvm-input-text)) (unbox (pegvm-input-position))))
 (define (pegvm-peek) (string-ref (pegvm-input-text) (unbox (pegvm-input-position))))
@@ -83,7 +88,8 @@
 ;;;;
 ;; peg compiler
 
-(define-for-syntax (peg-names exp)
+(eval-when (expand load eval)
+(define (peg-names exp)
   (syntax-case exp (epsilon char any-char range string and or * + ? call name ! drop)
     [(and e1) (peg-names #'e1)]
     [(and e1 e2) (append (peg-names #'e1) (peg-names #'e2))]
@@ -94,9 +100,10 @@
     [(? e1 ...) (peg-names #'(and e1 ...))]
     [(name nm subexp) (cons #'nm (peg-names #'subexp))]
     [(drop e1 ...) (peg-names #'(and e1 ...))]
-    [else '()]))
+    [else '()])))
 
-(define-for-syntax (peg-compile exp sk)
+(eval-when (expand load eval)
+(define (peg-compile exp sk)
   (define (single-char-pred sk x cond)
     (with-syntax ([sk sk] [x x] [cond cond])
       #'(if (pegvm-eof?)
@@ -212,24 +219,24 @@
            (cond ((char? shorthand) (peg-compile #`(char #,exp) #'sk))
                  ((string? shorthand) (peg-compile #`(string #,exp) #'sk))
                  ((symbol? shorthand) (peg-compile #`(call #,exp) #'sk))
-                 (else (raise-syntax-error "invalid peg" (syntax->datum exp)))))])))
+                 (else (raise-syntax-error "invalid peg" (syntax->datum exp)))))]))))
 
-(define-syntax (define-peg stx)
-  (define (make-binding nm)
-    (with-syntax ([nm nm]) #'(nm #f)))
-  (syntax-case stx ()
-    [(_ rule-name exp)
-     #'(define-peg rule-name exp #f)]
-    [(_ rule-name exp action)
-     (with-syntax ([name (format-id #'rule-name "peg-rule:~a" #'rule-name)]
-                   [bindings (map make-binding (peg-names #'exp))]
-                   [body (peg-compile #'exp #'sk^)]
-                   [action (if (syntax-e #'action) #'action #'res)])
-       #'(define (name sk)
-           (parameterize ([pegvm-current-rule 'name])
-             (let* bindings
-               (let ((sk^ (lambda (res) (sk action))))
-                 body)))))]))
+;(define-syntax (define-peg stx)
+;  (syntax-case stx ()
+;    [(_ rule-name exp)
+;     #'(define-peg rule-name exp #f)]
+;    [(_ rule-name exp action)
+;      (let ((make-binding (lambda (nm)
+;        (with-syntax ([nm nm]) #'(nm #f)))))
+;     (with-syntax ([name (format-id #'rule-name "peg-rule:~a" #'rule-name)]
+;                   [bindings (map make-binding (peg-names #'exp))]
+;                   [body (peg-compile #'exp #'sk^)]
+;                   [action (if (syntax-e #'action) #'action #'res)])
+;       #'(define (name sk)
+;          (parameterize ([pegvm-current-rule 'name])
+;             (let* bindings
+;               (let ((sk^ (lambda (res) (sk action))))
+;                 body))))))]))
 
 (define-syntax (define-peg/drop stx)
   (syntax-case stx () [(_ rule-name exp) #'(define-peg rule-name (drop exp))]))
